@@ -1,0 +1,20 @@
+# 가상환경
+.venv/
+venv/
+env/
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+
+# 데이터셋 (로컬 전용)
+data/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# PyTorch 가중치 (ONNX만 올릴 거면)
+*.pth
