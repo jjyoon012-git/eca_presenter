@@ -20,7 +20,7 @@ def export_to_onnx(
     torch.onnx.export(
         model, dummy, str(onnx_path),
         input_names=["input"], output_names=["logits"],
-        opset_version=11
+        opset_version=18
     )
     print(f"ONNX 모델을 {onnx_path}에 저장했습니다.")
 

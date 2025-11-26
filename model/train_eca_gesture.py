@@ -15,7 +15,7 @@ from torchvision.transforms import InterpolationMode
 
 NUM_CLASSES = 4  # ok, fist, index_up, v_sign
 
-BATCH_SIZE = 32
+BATCH_SIZE = 8
 NUM_EPOCHS = 20
 LR = 1e-3
 WEIGHT_DECAY = 1e-4

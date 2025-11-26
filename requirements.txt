@@ -5,3 +5,5 @@ onnx
 onnxruntime
 keyboard
 pyautogui
+mediapipe
+onnxscript

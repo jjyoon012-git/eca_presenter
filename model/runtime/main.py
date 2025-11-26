@@ -1,286 +1,287 @@
-import sys
 import time
 import platform
 from pathlib import Path
+from collections import deque
 
 import cv2
 import numpy as np
 import onnxruntime as ort
+import mediapipe as mp
 
-# ==========================
-# 0. 플랫폼 분기 설정
-# ==========================
+# 경로 설정
+ROOT = Path(__file__).resolve().parent.parent  # eca_presenter/
+MODEL_PATH = ROOT / "models" / "gesture_eca.onnx"
+LABELS_PATH = ROOT / "assets" / "labels.txt"
+
+
+# 키 입력 (Win / macOS)
 
 SYSTEM = platform.system()
-IS_MAC = SYSTEM == "Darwin"
 IS_WIN = SYSTEM == "Windows"
-CAM_INDEX = 0
+IS_MAC = SYSTEM == "Darwin"
 
-if IS_MAC:
+if IS_WIN:
+    import keyboard 
+elif IS_MAC:
     import pyautogui
-    print("[INFO] macOS 감지: pyautogui로 키 입력을 전송합니다.")
-elif IS_WIN:
-    import keyboard
-    print("[INFO] Windows 감지: keyboard 라이브러리로 키 입력을 전송합니다.")
-else:
-    print(f"[WARN] 지원되지 않는 OS: {SYSTEM}. 키 입력은 콘솔 로그로만 표시됩니다.")
 
-
-# ==========================
-# 1. 경로 설정
-# ==========================
-
-# 이 파일: model/runtime/main.py 기준
-RUNTIME_DIR = Path(__file__).resolve().parent
-ROOT_DIR = RUNTIME_DIR.parent.parent  # eca_presenter/
-
-MODEL_PATH = ROOT_DIR / "models" / "gesture_eca.onnx"
-LABELS_PATH = ROOT_DIR / "assets" / "labels.txt"
-
-if not MODEL_PATH.exists():
-    print(f"[ERROR] ONNX 모델이 없습니다: {MODEL_PATH}")
-    sys.exit(1)
-
-if not LABELS_PATH.exists():
-    print(f"[ERROR] 라벨 파일이 없습니다: {LABELS_PATH}")
-    sys.exit(1)
-
-
-# ==========================
-# 2. 라벨 로드
-# ==========================
-
-def load_labels(path: Path):
-    with open(path, "r", encoding="utf-8") as f:
-        labels = [line.strip() for line in f.readlines() if line.strip()]
-    return labels
-
-
-LABELS = load_labels(LABELS_PATH)
-print("[INFO] 클래스 라벨:", LABELS)
-
-
-# ==========================
-# 3. ONNX Runtime 세션 생성
-# ==========================
-
-def create_session(model_path: Path):
-    providers = ["CPUExecutionProvider"]
-    sess = ort.InferenceSession(str(model_path), providers=providers)
-    input_name = sess.get_inputs()[0].name
-    output_name = sess.get_outputs()[0].name
-    print("[INFO] ONNX 입력 이름:", input_name)
-    print("[INFO] ONNX 출력 이름:", output_name)
-    return sess, input_name, output_name
-
-
-session, input_name, output_name = create_session(MODEL_PATH)
-
-
-# ==========================
-# 4. 키 입력 함수 (OS별 분기)
-# ==========================
-
-def send_action(action: str):
-    """
-    action: "next", "prev", "laser_on", "laser_off"
-    """
-    print(f"[ACTION] {action}")
-
-    if IS_MAC:
-        # macOS: pyautogui 사용 (손쉬운 사용 > 키보드/입력 권한 필요)
-        if action == "next":
-            pyautogui.press("right")
-        elif action == "prev":
-            pyautogui.press("left")
-        elif action == "laser_on":
-            pyautogui.hotkey("ctrl", "l")
-        elif action == "laser_off":
-            pyautogui.hotkey("ctrl", "l")  # 또는 pyautogui.press("esc")
-
-    elif IS_WIN:
-        # Windows: keyboard 사용
-        if action == "next":
-            keyboard.press_and_release("right")
-        elif action == "prev":
-            keyboard.press_and_release("left")
-        elif action == "laser_on":
-            keyboard.press_and_release("ctrl+l")
-        elif action == "laser_off":
-            keyboard.press_and_release("ctrl+l")  # 또는 keyboard.press_and_release("esc")
-
+def send_key(key: str):
+    """플랫폼에 맞게 키 입력 전송."""
+    if IS_WIN:
+        try:
+            keyboard.send(key)
+        except Exception as e:
+            print(f"[WARN] keyboard.send 실패: {e}")
+    elif IS_MAC:
+        try:
+            pyautogui.press(key)
+        except Exception as e:
+            print(f"[WARN] pyautogui.press 실패: {e}")
     else:
-        # 기타 OS: 일단 콘솔에만 출력
-        pass
+        print(f"[INFO] (시뮬) 키 입력: {key}")
 
 
-# ==========================
-# 5. 제스처 → 액션 매핑
-# ==========================
+# 설정값 (필요 시 여기만 조정)
+INPUT_SIZE = (224, 224)
+CONF_THRESH = 0.5           # 이 값 이상일 때만 유효 판정
+STABLE_FRAMES = 3            # 동일 결과가 N프레임 연속 나와야 확정
+COOLDOWN_SEC = 0.7            # 같은 키 연타 방지
+MAX_NUM_HANDS = 1             # 한 손 기준
+PAD_PX = 24                   # bbox 주변 여백
+DRAW_VIS = True               # 시각화 박스/텍스트 그리기
 
-GESTURE_TO_ACTION = {
-    "ok": "next",
-    "fist": "prev",
-    "index_up": "laser_on",
-    "v_sign": "laser_off",
+# 카메라 인덱스 (None이면 실행 시 선택 모드)
+CAMERA_INDEX = 1         # 예: 맥북 카메라가 1번이면 1로 고정해도 됨
+
+# 라벨→키 매핑 (labels.txt 라벨과 이름을 맞춰주세요!)
+LABEL2KEY = {
+    # ✋ 손바닥 (라벨은 fist) → 다음 슬라이드
+    "fist": "right",
+
+    # 👌 ok 사인 → 이전 슬라이드
+    "ok": "left",
+
+    # 👉 검지 위로 → 레이저 포인터 토글 (켜기/끄기용)
+    "index_up": "command+l",
+
+    # ✌ V자 → 레이저 포인터 토글 (끄기/켜기 동일 키)
+    "v_sign": "esc",
 }
 
+# 유틸
+def load_labels(path: Path):
+    with open(path, "r", encoding="utf-8") as f:
+        labs = [ln.strip() for ln in f if ln.strip()]
+    return labs
 
-# ==========================
-# 6. 전처리 함수
-# ==========================
-
-def preprocess_frame(frame, img_size=224):
-    """
-    frame: BGR (OpenCV)
-    return: (1, 3, H, W) float32 numpy array
-    """
-    if frame is None or frame.size == 0:
-        return None
-
-    h, w, _ = frame.shape
-
-    # 정사각형 중심 크롭
-    side = min(h, w)
-    cy, cx = h // 2, w // 2
-    y1 = max(0, cy - side // 2)
-    y2 = y1 + side
-    x1 = max(0, cx - side // 2)
-    x2 = x1 + side
-
-    crop = frame[y1:y2, x1:x2]
-
-    if crop.size == 0:
-        return None
-
-    # 모델 입력용 크기 변경
-    resized = cv2.resize(crop, (img_size, img_size))
-
-    # BGR -> RGB
-    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-
-    # [0,1] 스케일 후 Normalize (train과 동일)
-    img = rgb.astype(np.float32) / 255.0
-    img = (img - 0.5) / 0.5  # mean=0.5, std=0.5
-
-    # HWC -> CHW
-    img = np.transpose(img, (2, 0, 1))  # (C, H, W)
-
-    # 배치 차원 추가
-    img = np.expand_dims(img, axis=0)  # (1, 3, H, W)
-
-    return img.astype(np.float32)
-
-
-def softmax(x):
-    x = np.array(x, dtype=np.float32)
-    x = x - np.max(x)
+def softmax(x: np.ndarray):
+    x = x - x.max(axis=-1, keepdims=True)
     e = np.exp(x)
-    return e / np.sum(e)
+    return e / e.sum(axis=-1, keepdims=True)
 
+def crop_square_with_pad(img, x1, y1, x2, y2, pad=0):
+    h, w = img.shape[:2]
+    x1 = max(0, x1 - pad); y1 = max(0, y1 - pad)
+    x2 = min(w, x2 + pad); y2 = min(h, y2 + pad)
+    # 정사각형 맞추기
+    bw, bh = (x2 - x1), (y2 - y1)
+    side = max(bw, bh)
+    cx = (x1 + x2) // 2
+    cy = (y1 + y2) // 2
+    sx1 = max(0, cx - side // 2)
+    sy1 = max(0, cy - side // 2)
+    sx2 = min(w, sx1 + side)
+    sy2 = min(h, sy1 + side)
+    return img[sy1:sy2, sx1:sx2], (sx1, sy1, sx2, sy2)
 
-# ==========================
-# 7. 메인 루프
-# ==========================
-
-def main():
-    # ---- 카메라 열기 ----
+def open_camera(index: int):
+    """플랫폼별로 카메라를 연다."""
     if IS_MAC:
-        cap = cv2.VideoCapture(CAM_INDEX, cv2.CAP_AVFOUNDATION)
+        cap = cv2.VideoCapture(index, cv2.CAP_AVFOUNDATION)
     else:
-        cap = cv2.VideoCapture(CAM_INDEX)
+        cap = cv2.VideoCapture(index)
+    return cap
 
-    if not cap.isOpened():
-        print("[ERROR] 웹캠을 열 수 없습니다.")
-        return
-
-    print("[INFO] 웹캠 시작. 종료하려면 'q'를 누르세요.")
-
-    last_action_time = 0.0
-    action_cooldown = 1.5   # 한 번 제스처 실행 후 최소 1.5초 대기
-    stable_required = 0.25  # 같은 제스처가 0.25초 이상 유지될 때만 실행
-
-    last_pred = None
-    last_action_label = None
-    stable_start = None
-
-    while True:
-        ret, frame = cap.read()
-        if not ret or frame is None or frame.size == 0:
-            print("[WARN] 프레임을 읽어올 수 없습니다.")
-            break
-
-        # === 디버깅용: 프레임이 회색/고정인지 체크 ===
-        if IS_MAC:
-            # 프레임의 표준편차가 너무 작으면(거의 단색) 카메라 권한/Continuity 이슈일 수 있음
-            std_val = frame.std()
-            if std_val < 3:
-                # 너무 많이 찍히면 시끄러우니까 가끔만 보고 싶으면 주석 처리 가능
-                print(f"[WARN] 프레임 표준편차가 매우 낮음 (std={std_val:.2f}) - 거의 단색 화면일 수 있습니다.")
-
-        # 모델 입력 전처리
-        input_blob = preprocess_frame(frame, img_size=224)
-        if input_blob is None:
+def select_camera(max_index: int = 4) -> cv2.VideoCapture:
+    """여러 카메라 중에서 사용자가 선택하도록 함."""
+    print("[INFO] 카메라 선택 모드: 맥북 카메라 화면에서 's'를 눌러 선택하세요.")
+    chosen_cap = None
+    for idx in range(max_index + 1):
+        cap = open_camera(idx)
+        if not cap.isOpened():
+            cap.release()
             continue
 
-        # ONNX 추론
-        ort_inputs = {input_name: input_blob}
-        ort_outs = session.run([output_name], ort_inputs)
-        logits = ort_outs[0][0]              # (num_classes,)
-        probs = softmax(logits)
-        pred_idx = int(np.argmax(probs))
-        pred_label = LABELS[pred_idx] if pred_idx < len(LABELS) else "unknown"
-        pred_conf = float(probs[pred_idx])
+        ok, frame = cap.read()
+        if not ok:
+            cap.release()
+            continue
 
-        now = time.time()
+        txt = f"Camera {idx} - 's' 선택, 다른 키: 다음으로"
+        cv2.putText(frame, txt, (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.imshow("Select Camera", frame)
+        key = cv2.waitKey(0) & 0xFF
+        cv2.destroyWindow("Select Camera")
 
-        # === 제스처 안정화 로직 ===
-        if pred_label == last_pred and pred_conf >= 0.7:
-            if stable_start is None:
-                stable_start = now
-        else:
-            stable_start = None
-
-        last_pred = pred_label
-
-        # === 화면에 내 모습 + 예측 결과 표시 (원본 프레임 사용) ===
-        vis_frame = frame.copy()
-        text = f"{pred_label} ({pred_conf:.2f})"
-        cv2.putText(
-            vis_frame,
-            text,
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.0,
-            (0, 255, 0),
-            2,
-        )
-        cv2.imshow("ECA Presenter (Gesture View)", vis_frame)
-
-        # === 실제 액션 실행 조건 ===
-        CONF_THRESH = 0.7
-
-        if (
-            stable_start is not None
-            and (now - stable_start) >= stable_required        # 일정 시간 유지
-            and pred_conf >= CONF_THRESH                      # confidence 충분히 높음
-            and (now - last_action_time) >= action_cooldown   # 쿨다운 지남
-            and pred_label in GESTURE_TO_ACTION               # 정의된 제스처
-            and pred_label != last_action_label               # 같은 제스처 연속으로 재발동 금지
-        ):
-            action = GESTURE_TO_ACTION[pred_label]
-            send_action(action)
-            last_action_time = now
-            last_action_label = pred_label
-            stable_start = None  # 다시 안정기간 측정
-
-        # 종료 키
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        if key == ord('s'):
+            print(f"[INFO] Camera {idx} 선택됨")
+            chosen_cap = cap
             break
+        else:
+            cap.release()
 
-    cap.release()
-    cv2.destroyAllWindows()
+    if chosen_cap is None:
+        raise RuntimeError("사용 가능한 카메라를 선택하지 못했습니다.")
+    return chosen_cap
+
+# ONNX 로드
+assert MODEL_PATH.exists(), f"모델이 없습니다: {MODEL_PATH}"
+labels = load_labels(LABELS_PATH)
+print(f"[INFO] labels: {labels}")
+
+providers = (
+    ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    if "CUDAExecutionProvider" in ort.get_available_providers()
+    else ["CPUExecutionProvider"]
+)
+sess = ort.InferenceSession(str(MODEL_PATH), providers=providers)
+in_name = sess.get_inputs()[0].name
+out_name = sess.get_outputs()[0].name
+print(f"[INFO] ONNX loaded with providers={providers}")
+print(f"[INFO] inputs={in_name}, outputs={out_name}")
+
+# MediaPipe Hands
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=MAX_NUM_HANDS,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
+
+# 안정화/쿨다운 상태
+recent = deque(maxlen=STABLE_FRAMES)
+last_confirmed = None
+last_sent_time = 0.0
 
 
-if __name__ == "__main__":
-    main()
+# 카메라 열기
+if CAMERA_INDEX is None:
+    cap = select_camera(max_index=4)  # 필요하면 최대 인덱스 조정
+else:
+    cap = open_camera(CAMERA_INDEX)
+
+if not cap.isOpened():
+    raise RuntimeError("카메라를 열 수 없습니다.")
+
+fps_t0 = time.time()
+fps_cnt = 0
+fps_val = 0.0
+
+print("[INFO] 시작: 'q'로 종료")
+while True:
+    ok, frame = cap.read()
+    if not ok:
+        print("[WARN] 프레임 읽기 실패")
+        break
+
+    h, w = frame.shape[:2]
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    res = hands.process(rgb)
+
+    roi = None
+    roi_box = None
+    # hand_present = False
+
+    if res.multi_hand_landmarks:
+        # 모든 랜드마크 좌표를 이용해 바운딩 박스 계산
+        lm = res.multi_hand_landmarks[0]  # 첫 번째 손만
+        xs = [int(pt.x * w) for pt in lm.landmark]
+        ys = [int(pt.y * h) for pt in lm.landmark]
+        x1, x2 = min(xs), max(xs)
+        y1, y2 = min(ys), max(ys)
+
+        # pad + 정사각 crop
+        roi, roi_box = crop_square_with_pad(frame, x1, y1, x2, y2, PAD_PX)
+        roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+
+    # ROI 없으면 전체 프레임에서 중앙 정사각 크롭 (fallback)
+    if roi is None:
+        side = min(h, w)
+        sx1 = (w - side) // 2
+        sy1 = (h - side) // 2
+        roi = frame[sy1:sy1 + side, sx1:sx1 + side]
+        roi_box = (sx1, sy1, sx1 + side, sy1 + side)
+        roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+
+    # 전처리
+    inp = cv2.resize(roi, INPUT_SIZE, interpolation=cv2.INTER_LINEAR)
+    inp = inp.astype(np.float32) / 255.0          # [0, 1]
+    inp = (inp - 0.5) / 0.5                       # [-1, 1]  == Normalize(0.5,0.5)
+    inp = np.transpose(inp, (2, 0, 1))[None, ...] # (1, 3, H, W)
+
+
+    # 추론
+    probs = sess.run([out_name], {in_name: inp})[0].squeeze()  # (C,)
+    if probs.ndim == 0:
+        probs = np.array([1.0], dtype=np.float32)
+    if probs.ndim == 1 and probs.shape[0] == len(labels):
+        pred_prob = softmax(probs)
+    else:
+        # 이미 softmax 상태일 수도 있으니 normalize
+        x = probs.astype(np.float32)
+        pred_prob = x / max(1e-9, x.sum())
+
+    pred_idx = int(np.argmax(pred_prob))
+    pred_label = labels[pred_idx]
+    pred_conf = float(pred_prob[pred_idx])
+
+    # 안정화 버퍼 업데이트
+    recent.append(pred_label)
+    confirmed = None
+    if len(recent) == STABLE_FRAMES and all(x == recent[0] for x in recent) and pred_conf >= CONF_THRESH:
+        confirmed = recent[0]
+
+    # 키 입력 (쿨다운)
+    now = time.time()
+    if (
+        confirmed
+        # and hand_present
+        and confirmed != last_confirmed and (now - last_sent_time) >= COOLDOWN_SEC):
+        key = LABEL2KEY.get(confirmed)
+        if key:
+            print(f"[ACT] {confirmed} ({pred_conf:.2f}) -> key='{key}'")
+            send_key(key)
+            last_sent_time = now
+            last_confirmed = confirmed
+        else:
+            print(f"[INFO] 매핑 없음: '{confirmed}' (labels.txt와 LABEL2KEY 확인)")
+
+    # 시각화
+    if DRAW_VIS and roi_box is not None:
+        x1, y1, x2, y2 = roi_box
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        txt = f"{pred_label}:{pred_conf:.2f}"
+        if confirmed:
+            txt = f"[OK]{txt}"
+        cv2.putText(frame, txt, (x1, max(20, y1 - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    (0, 255, 0) if confirmed else (0, 200, 255), 2)
+
+    # FPS
+    fps_cnt += 1
+    if time.time() - fps_t0 >= 1.0:
+        fps_val = fps_cnt / (time.time() - fps_t0)
+        fps_cnt = 0
+        fps_t0 = time.time()
+    cv2.putText(frame, f"FPS: {fps_val:.1f}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+    cv2.imshow("ECA Gesture Presenter (Hand ROI)", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+print("[INFO] 종료")
