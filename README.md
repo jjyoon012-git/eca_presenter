@@ -6,7 +6,7 @@
 
 * ➡️ **다음 슬라이드**
 * ⬅️ **이전 슬라이드**
-* 🔴 **레이저 포인터 켜기/끄기**
+* 🔴 **슬라이드 종료**
 
 를 조작할 수 있는 초경량 온디바이스 AI 리모컨입니다.
 모델은 **ECA-Net(Efficient Channel Attention)** 기반으로 매우 가볍고 빠릅니다.
@@ -27,7 +27,7 @@
 
 ---
 
-## 🚀 1. 설치 방법
+## 1. How to Use
 
 ### 1) 저장소 클론
 
@@ -36,7 +36,7 @@ git clone https://github.com/USER/eca_presenter.git
 cd eca_presenter
 ```
 
-### 2) 가상환경 생성 (선택)
+### 2) 가상환경 생성
 
 ```bash
 python -m venv .venv
@@ -68,7 +68,7 @@ pip install -r requirements.txt
 
 ---
 
-## 🎥 2. 실행 방법 (바로 사용)
+## 🎥 2. 실행 방법
 
 이미 학습된 모델(`models/gesture_eca.onnx`)과
 라벨(`assets/labels.txt`)이 포함되어 있으므로
@@ -85,7 +85,7 @@ python runtime/main.py
 
 ---
 
-## 🧠 3. 모델 재학습 (원하면)
+## 3. 모델 재학습
 
 ### 1) 데이터셋 구조
 
@@ -132,7 +132,7 @@ models/gesture_eca.onnx
 
 ---
 
-## 🧩 4. 프로젝트 구조
+## 4. 프로젝트 구조
 
 ```text
 eca_presenter/
@@ -151,7 +151,7 @@ eca_presenter/
 
 ---
 
-## 🔧 5. 개발 환경
+## 5. 개발 환경
 
 * Python 3.10
 * PyTorch (CPU 또는 GPU 선택)
@@ -163,7 +163,7 @@ eca_presenter/
 
 ---
 
-## 💡 6. 실제 사용 예시
+## 6. 실제 사용 예시
 
 * **발표 중 리모컨 없이 슬라이드 넘기기**
 * **온라인 수업 중 손 제스처로 화면 제어**
