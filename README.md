@@ -1,4 +1,4 @@
-# 🎯 ECA Presenter
+# 🎯 ECA Presenter - ECAGestureNet
 
 > **On-Device AI Remote for Slide Control Using Hand Gestures**
 
