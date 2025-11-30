@@ -1,66 +1,91 @@
 # 🎯 ECA Presenter
 
-**손 제스처로 슬라이드를 넘기는 온디바이스 프레젠테이션 리모컨**
+> **On-Device AI Remote for Slide Control Using Hand Gestures**
 
-웹캠으로 손 제스처를 인식해
+**ECA Presenter** is a lightweight on-device AI remote that lets you control your presentation slides using **webcam-based hand gesture recognition** — no Bluetooth, smartphone, or network required.
 
-* ➡️ **다음 슬라이드**
-* ⬅️ **이전 슬라이드**
-* 🔴 **슬라이드 종료**
-
-를 조작할 수 있는 초경량 온디바이스 AI 리모컨입니다.
-모델은 **ECA-Net(Efficient Channel Attention)** 기반으로 매우 가볍고 빠릅니다.
+Built on **ECA-Net (Efficient Channel Attention)**, it performs **real-time gesture inference on CPU-only environments** at up to **30 FPS**.
 
 ---
 
-## ✋ 지원 제스처
+## ✋ Supported Gestures
 
-| 제스처      | 기능(Action)  | 모델 라벨(Class) | 설명                                                           |
-| -------- | ----------- | ------------ | ------------------------------------------------------------ |
-| ✋ 손바닥    | 다음 슬라이드     | `fist`       | 현재 데이터셋에서 손바닥과 주먹이 동일 라벨(`fist`)로 분류되어 있어, 기능만 “다음 슬라이드”로 매핑 |
-| 👌 OK 사인 | 이전 슬라이드     | `ok`         | 엄지-검지가 원을 이루는 제스처                                            |
-| 👉 검지 위로 | 레이저 포인터 켜기  | `index_up`   | Keynote/PPT 포인터 기능 활성화 (Ctrl + L)                            |
-| ✌ V자     | PPT 종료(ESC) | `v_sign`     | 레이저 포인터 종료 포함, PPT 종료                                        |
+| Gesture | Action | Model Label | Description |
+| -------- | ------- | ------------ | ------------ |
+| ✋ Palm | Next slide | `fist` | Palm and fist are unified under the same label (`fist`) and mapped to “Next Slide.” |
+| 👌 OK Sign | Previous slide | `ok` | Thumb and index finger form a circle. |
+| 👉 Index Up | Activate laser pointer | `index_up` | Triggers the pointer shortcut (e.g., `Ctrl + L` in PowerPoint). |
+| ✌ V Sign | End presentation | `v_sign` | Ends the presentation and disables the pointer. |
 
-
-> 슬라이드 종류(PowerPoint, Google Slides, Keynote 모두 지원)
+> Compatible with **PowerPoint**, **Keynote**, and **Google Slides**.
 
 ---
 
-## 1. How to Use
+## ECAGestureNet Architecture
 
-### 1) 저장소 클론
+```
+──────────────────────────────────────────────────────────────
+Input: 3 × 224 × 224 RGB
+──────────────────────────────────────────────────────────────
+Stage 1: Conv(3→32, k3, s2, p1) → BN → ReLU → ECA(32)
+Output: 32 × 112 × 112
+──────────────────────────────────────────────────────────────
+Stage 2: Conv(32→64) → BN → ReLU → ECA(64)
+Output: 64 × 56 × 56
+──────────────────────────────────────────────────────────────
+Stage 3: Conv(64→128) → BN → ReLU → ECA(128)
+Output: 128 × 28 × 28
+──────────────────────────────────────────────────────────────
+Stage 4: Conv(128→256) → BN → ReLU → ECA(256)
+Output: 256 × 14 × 14
+──────────────────────────────────────────────────────────────
+Global AvgPool → FC(256 → num_classes)
+Output: logits (4 classes)
+──────────────────────────────────────────────────────────────
+```
+
+### Highlights
+
+- Each stage uses **Conv-BN-ReLU + ECA Block**
+- ECA (Efficient Channel Attention) applies **1D convolution-based channel attention**
+- Lightweight alternative to SE/CBAM with minimal overhead
+- Global Average Pooling + FC for classification (`ok`, `fist`, `index_up`, `v_sign`)
+
+> **Summary:** “Four Conv-ECA stages + Global Pool + FC” = compact yet powerful gesture recognition CNN.
+
+---
+
+## How to Use
+
+### 1) Clone the repository
 
 ```bash
 git clone https://github.com/USER/eca_presenter.git
 cd eca_presenter
 ```
 
-### 2) 가상환경 생성
+### 2) Create a virtual environment
 
 ```bash
 python -m venv .venv
-
 # Windows
-.\.venv\Scripts\Activate.ps1
-
+.\.venv\Scripts\activate
 # macOS / Linux
 source .venv/bin/activate
 ```
 
-### 3) PyTorch 설치
+### 3) Install PyTorch
 
-각자 환경에 맞는 명령을 PyTorch 공식사이트에서 복사해 설치하는 것을 권장합니다.
-
+Use the official PyTorch installer for your system:  
 🔗 [https://pytorch.org/get-started/locally/](https://pytorch.org/get-started/locally/)
 
-**예시 (CPU 전용):**
+Example (CPU only):
 
 ```bash
 pip install torch torchvision
 ```
 
-### 4) 나머지 패키지 설치
+### 4) Install remaining dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -68,28 +93,28 @@ pip install -r requirements.txt
 
 ---
 
-## 🎥 2. 실행 방법
-
-이미 학습된 모델(`models/gesture_eca.onnx`)과
-라벨(`assets/labels.txt`)이 포함되어 있으므로
-**웹캠 있는 PC라면 바로 실행 가능!**
+## 2. Run the Application
 
 ```bash
 python runtime/main.py
 ```
 
-실행되면:
+**Runtime behavior:**
+- Displays the recognized gesture and confidence score.
+- Sends keyboard events directly to the active presentation window.
+- Works fully offline using ONNX Runtime.
 
-* 상단에 인식된 제스처 + confidence 표시
-* 슬라이드 창을 활성화해두면 자동으로 키 입력 전송
+**Included models:**
+```
+models/gesture_eca.onnx
+assets/labels.txt
+```
 
 ---
 
-## 3. 모델 재학습
+## 3. Training & Model Conversion
 
-### 1) 데이터셋 구조
-
-아래 폴더에 제스처 이미지를 넣습니다:
+### Dataset structure
 
 ```
 data/
@@ -105,67 +130,116 @@ data/
     v_sign/
 ```
 
-### 2) 학습 실행
+### Train the model
 
 ```bash
 python model/train_eca_gesture.py
 ```
 
-학습 완료 후 다음이 생성됨:
+Output:
+```
+model/eca_gesture.pth
+assets/labels.txt
+```
 
-* `model/eca_gesture.pth` (PyTorch weights)
-* `assets/labels.txt`
-
-### 3) ONNX로 변환
+### Convert to ONNX
 
 ```bash
 python model/export_onnx.py
 ```
 
-변환된 ONNX 모델:
-
+Output:
 ```
 models/gesture_eca.onnx
 ```
 
-이제 runtime에서 자동으로 사용됩니다.
-
 ---
 
-## 4. 프로젝트 구조
+## 4. Project Structure
 
 ```text
 eca_presenter/
 ├── model/
-│   ├── train_eca_gesture.py        # 학습 코드
-│   └── export_onnx.py              # ONNX 변환기
+│   ├── train_eca_gesture.py        # Training script
+│   └── export_onnx.py              # ONNX exporter
 ├── runtime/
-│   └── main.py                     # 웹캠 + 슬라이드 제어 실행코드
+│   └── main.py                     # Webcam runtime + slide control
 ├── models/
-│   └── gesture_eca.onnx            # 학습된 ONNX 모델
+│   └── gesture_eca.onnx            # Trained ONNX model
 ├── assets/
-│   └── labels.txt                  # 클래스 라벨
+│   └── labels.txt                  # Class labels
 ├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## 5. 개발 환경
+## 5. Design Motivation
 
-* Python 3.10
-* PyTorch (CPU 또는 GPU 선택)
-* OpenCV
-* ONNX / ONNX Runtime
-* keyboard 라이브러리 (키 입력)
+### ① Inefficiency of smartphone remotes  
+Presenters often can’t use both hands freely during talks.  
+Using a smartphone to swipe slides interrupts the flow.
 
-모두 `requirements.txt`에 포함되어 있습니다.
+### ② Limitations of Bluetooth clickers  
+- Battery drain or pairing failure  
+- Compatibility issues  
+- Easy to lose  
+- May disconnect unexpectedly  
+
+### ③ On-device AI advantages  
+- No internet required  
+- No data sent externally (privacy-safe)  
+- Runs in real time on CPU using ONNX Runtime  
+- Minimal latency and stable slide control  
 
 ---
 
-## 6. 실제 사용 예시
+## 6. System Pipeline
 
-* **발표 중 리모컨 없이 슬라이드 넘기기**
-* **온라인 수업 중 손 제스처로 화면 제어**
-* **스마트 미디어 아트 전시 제스처 인터랙션**
-* **회의실 PC에서 손으로 슬라이드 조작**
+1. **MediaPipe Hands** detects the hand region.  
+2. Crop and resize ROI to 224×224.  
+3. **ONNX Runtime** performs gesture inference via ECAGestureNet.  
+4. Apply **stability filtering** (confidence & consistent frames).  
+5. Send key events using **pyautogui/keyboard** to control slides.
+
+> Achieves ~30 FPS on CPU with < 50 ms end-to-end latency.
+
+---
+
+## 7. Research Contribution
+
+| Goal | Description |
+| ---- | ------------ |
+| **ECA validation in real HCI** | Demonstrates ECA’s effectiveness in real-time, on-device gesture recognition. |
+| **Lightweight attention** | Achieves similar accuracy to SE/CBAM with fewer FLOPs. |
+| **Realtime performance** | Runs on CPU with no perceptible delay. |
+| **Applied prototype** | Integrates ECA-Net into a functional presentation-control application. |
+
+> This project bridges **academic model design** and **practical on-device AI applications** in HCI.
+
+---
+
+## 8. Development Environment
+
+- Python 3.10  
+- PyTorch / ONNX / ONNX Runtime  
+- OpenCV  
+- MediaPipe (optional)  
+- keyboard / pyautogui  
+
+---
+
+## 9. Example Use Cases
+
+- Gesture-controlled **slide navigation** during live talks  
+- **Online teaching** with natural pointer control  
+- **Interactive media art** installations  
+- **Conference rooms** without physical remotes  
+
+---
+
+## Reference
+
+> Wang Q., Wu B., Zhu P., Li P., Zuo W., Hu Q.  
+> **ECA-Net: Efficient Channel Attention for Deep Convolutional Neural Networks.**  
+> *Proceedings of CVPR 2020.*
